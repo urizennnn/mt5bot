@@ -23,6 +23,8 @@ This repository provides a simple trading assistant that listens to messages fro
     TELEGRAM_API_ID=<api id>
     TELEGRAM_API_HASH=<api hash>
     TELEGRAM_CHANNELS=<comma separated ids or usernames>
+    # for numeric ids include the -100 prefix and separate entries with commas
+    # e.g. TELEGRAM_CHANNELS=-100<id1>,-100<id2>
     MT5_LOGIN=<account>
     MT5_PASSWORD=<password>
     MT5_SERVER=<broker server>
