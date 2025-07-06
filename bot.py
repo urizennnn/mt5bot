@@ -323,12 +323,25 @@ async def list_chats():
     await client.disconnect()
 
 
+def place_test_trade():
+    """Place a sample trade on the VIX 25 index."""
+    if not connect_mt5():
+        return
+    signal = TradeSignal(action="buy", symbol="VIX25", timeframe="1s")
+    place_order(signal)
+    if mt5 is not None:
+        mt5.shutdown()
+
+
 async def run_client():
     if TelegramClient is None:
         logger.error("telethon package not installed")
         return
     if not API_ID or not API_HASH:
         logger.error("TELEGRAM_API_ID and TELEGRAM_API_HASH must be set")
+        return
+
+    if not connect_mt5():
         return
 
     client = TelegramClient("mt5bot", API_ID, API_HASH)
@@ -368,13 +381,23 @@ def main() -> None:
         help="Fetch last two messages from allowed channels and exit",
     )
     parser.add_argument(
+        "--trade",
+        nargs="?",
+        const="default",
+        help="Place a test VIX 25 order and exit",
+    )
+    parser.add_argument(
         "--groups",
         action="store_true",
         help="List available channels, groups and chats and exit",
     )
     args = parser.parse_args()
 
-    if args.test:
+    connect_mt5()
+
+    if args.trade is not None:
+        place_test_trade()
+    elif args.test:
         asyncio.run(test_last_messages())
     elif args.groups:
         asyncio.run(list_chats())

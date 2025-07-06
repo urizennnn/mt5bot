@@ -37,11 +37,10 @@ This repository provides a simple trading assistant that listens to messages fro
     python bot.py
     ```
 
-    To test your configuration and fetch the last two messages from each
-    configured channel, run:
+    To place a sample trade on the VIX 25 index and exit, run:
 
     ```bash
-    python bot.py --test
+    python bot.py --trade
     ```
 
     To list the chats, channels and groups your account can access,
