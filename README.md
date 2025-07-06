@@ -9,6 +9,7 @@ This repository provides a simple trading assistant that listens to messages fro
 - Calculates trade lot size based on current account balance.
 - Automatically moves stop loss to break even after minimal profit.
 - Closes trades if price reverses against the opened position.
+- Works with channels, groups and direct chats.
 
 ## Usage
 
@@ -38,6 +39,13 @@ This repository provides a simple trading assistant that listens to messages fro
 
     ```bash
     python bot.py --test
+    ```
+
+    To list the chats, channels and groups your account can access,
+    run:
+
+    ```bash
+    python bot.py --groups
     ```
 
 The script will start listening to the specified channels using your personal account. When a supported trading signal is received, it will attempt to place a trade via MT5. If a trade is already open, new signals are ignored.
