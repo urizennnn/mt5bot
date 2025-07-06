@@ -1,6 +1,6 @@
-# MT5 Telegram Trading Bot
+# MT5 Telegram Trading Assistant
 
-This repository provides a simple trading bot that listens to Telegram messages and executes trades through the MetaTrader 5 (MT5) API.
+This repository provides a simple trading assistant that listens to messages from your personal Telegram account and executes trades through the MetaTrader 5 (MT5) API.
 
 ## Features
 
@@ -13,24 +13,26 @@ This repository provides a simple trading bot that listens to Telegram messages 
 ## Usage
 
 1. Install dependencies (Python 3.10+ recommended):
-   ```bash
-   pip install MetaTrader5 python-telegram-bot python-dotenv
-   ```
+    ```bash
+    pip install MetaTrader5 telethon python-dotenv
+    ```
 
-2. Create a `.env` file with your bot and MT5 credentials:
-   ```
-   TELEGRAM_BOT_TOKEN=<your token>
-   MT5_LOGIN=<account>
-   MT5_PASSWORD=<password>
-   MT5_SERVER=<broker server>
-   RISK_PERCENT=1.0
-   ```
+2. Create a `.env` file with your Telegram and MT5 credentials:
+    ```
+    TELEGRAM_API_ID=<api id>
+    TELEGRAM_API_HASH=<api hash>
+    TELEGRAM_CHANNELS=<comma separated ids or usernames>
+    MT5_LOGIN=<account>
+    MT5_PASSWORD=<password>
+    MT5_SERVER=<broker server>
+    RISK_PERCENT=1.0
+    ```
 
-3. Run the bot:
-   ```bash
-   python bot.py
-   ```
+3. Run the script:
+    ```bash
+    python bot.py
+    ```
 
-The bot will start polling Telegram for new messages. When a supported trading signal is received, it will attempt to place a trade via MT5.
+The script will start listening to the specified channels using your personal account. When a supported trading signal is received, it will attempt to place a trade via MT5. If a trade is already open, new signals are ignored.
 
 **Note:** Actual trading requires a configured MT5 terminal with login credentials and symbols enabled. The break-even and reversal thresholds in this bot are simple examples and should be adapted to your trading strategy.

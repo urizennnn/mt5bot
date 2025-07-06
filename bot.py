@@ -3,7 +3,7 @@ import os
 import re
 import asyncio
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List
 
 try:
     from dotenv import load_dotenv
@@ -16,15 +16,10 @@ except ImportError:  # environment might not have MetaTrader5
     mt5 = None  # type: ignore
 
 try:
-    from telegram import Update
-    from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+    from telethon import TelegramClient, events
 except ImportError:
-    Update = None  # type: ignore
-    class _DummyContext:
-        DEFAULT_TYPE = object
-
-    ApplicationBuilder = CommandHandler = MessageHandler = filters = None  # type: ignore
-    ContextTypes = _DummyContext  # type: ignore
+    TelegramClient = None  # type: ignore
+    events = None  # type: ignore
 
 
 logging.basicConfig(level=logging.INFO)
@@ -33,7 +28,10 @@ logger = logging.getLogger(__name__)
 if load_dotenv is not None:
     load_dotenv()
 
-RISK_PERCENT = float(os.environ.get("RISK_PERCENT", "1.0"))
+RISK_PERCENT = float(os.getenv("RISK_PERCENT", "1.0"))
+API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
+API_HASH = os.getenv("TELEGRAM_API_HASH", "")
+ALLOWED_CHANNELS: List[str] = [c.strip() for c in os.getenv("TELEGRAM_CHANNELS", "").split(",") if c.strip()]
 
 @dataclass
 class TradeSignal:
@@ -67,9 +65,9 @@ def connect_mt5() -> bool:
     if mt5.initialize():
         return True
 
-    login = int(os.environ.get("MT5_LOGIN", "0"))
-    password = os.environ.get("MT5_PASSWORD", "")
-    server = os.environ.get("MT5_SERVER", "")
+    login = int(os.getenv("MT5_LOGIN", "0"))
+    password = os.getenv("MT5_PASSWORD", "")
+    server = os.getenv("MT5_SERVER", "")
     if login and password and server:
         if mt5.initialize(login=login, password=password, server=server):
             return True
@@ -83,6 +81,14 @@ def calculate_lot(balance: float, risk_percent: float = 1.0) -> float:
     risk_amount = balance * risk_percent / 100.0
     lot = max(round(risk_amount / 100.0, 2), 0.01)
     return lot
+
+
+def has_open_positions() -> bool:
+    """Return True if there are any open MT5 positions."""
+    if mt5 is None:
+        return False
+    positions = mt5.positions_get()
+    return bool(positions)
 
 
 def place_order(signal: TradeSignal):
@@ -223,35 +229,42 @@ async def monitor_trade(ticket: int, signal: TradeSignal):
         check_reversal_and_close(ticket, signal)
 
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  # type: ignore
-    text = update.message.text  # type: ignore
-    signal = parse_signal(text)
-    if signal:
-        if connect_mt5():
+async def run_client():
+    if TelegramClient is None:
+        logger.error("telethon package not installed")
+        return
+    if not API_ID or not API_HASH:
+        logger.error("TELEGRAM_API_ID and TELEGRAM_API_HASH must be set")
+        return
+
+    client = TelegramClient("mt5bot", API_ID, API_HASH)
+
+    @client.on(events.NewMessage)
+    async def handle_event(event):
+        chat = event.chat
+        chat_id = str(event.chat_id)
+        username = getattr(chat, "username", None) if chat else None
+        if ALLOWED_CHANNELS and chat_id not in ALLOWED_CHANNELS and (username not in ALLOWED_CHANNELS):
+            return
+
+        text = event.message.message
+        signal = parse_signal(text)
+        if signal and connect_mt5():
+            if has_open_positions():
+                logger.warning("Open position detected, skipping new trade")
+                return
             ticket = place_order(signal)
             if ticket:
                 asyncio.create_task(monitor_trade(ticket, signal))
-        await update.message.reply_text(f"Received signal: {signal}")
-    else:
-        logger.debug("No valid signal found in message: %s", text)
+        else:
+            logger.debug("No valid signal found in message: %s", text)
 
-
-def main(token: str):
-    if ApplicationBuilder is None:
-        logger.error("telegram package not installed")
-        return
-    app = ApplicationBuilder().token(token).build()
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-    logger.info("Bot started")
-    app.run_polling()
+    await client.start()
+    logger.info("Client started")
+    await client.run_until_disconnected()
 
 
 if __name__ == "__main__":
-    import os
     if load_dotenv is not None:
         load_dotenv()
-    telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    if telegram_token:
-        main(telegram_token)
-    else:
-        logger.error("TELEGRAM_BOT_TOKEN not set")
+    asyncio.run(run_client())
