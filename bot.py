@@ -3,7 +3,7 @@ import os
 import re
 import asyncio
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import Optional, List, Set, Tuple, Union
 import argparse
 
 try:
@@ -34,7 +34,28 @@ if load_dotenv is not None:
 RISK_PERCENT = float(os.getenv("RISK_PERCENT", "1.0"))
 API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
 API_HASH = os.getenv("TELEGRAM_API_HASH", "")
-ALLOWED_CHANNELS: List[str] = [c.strip() for c in os.getenv("TELEGRAM_CHANNELS", "").split(",") if c.strip()]
+
+ALLOWED_CHANNELS: List[str] = [
+    c.strip() for c in os.getenv("TELEGRAM_CHANNELS", "").split(",") if c.strip()
+]
+
+def _parse_allowed(raw: List[str]) -> Tuple[Set[int], Set[str]]:
+    ids: Set[int] = set()
+    names: Set[str] = set()
+    for item in raw:
+        if re.fullmatch(r"-?\d+", item):
+            ids.add(int(item))
+        else:
+            names.add(item.lower())
+    return ids, names
+
+
+ALLOWED_ID_SET, ALLOWED_NAME_SET = _parse_allowed(ALLOWED_CHANNELS)
+
+
+def _to_input(value: str) -> Union[int, str]:
+    """Return int for numeric identifiers or the original string."""
+    return int(value) if re.fullmatch(r"-?\d+", value) else value
 
 @dataclass
 class TradeSignal:
@@ -249,7 +270,7 @@ async def test_last_messages():
     await client.start()
     for channel in ALLOWED_CHANNELS:
         try:
-            messages = await client.get_messages(channel, limit=2)
+            messages = await client.get_messages(_to_input(channel), limit=2)
         except Exception as exc:
             logger.error("Failed to fetch messages from %s: %s", channel, exc)
             continue
@@ -305,9 +326,11 @@ async def run_client():
     @client.on(events.NewMessage)
     async def handle_event(event):
         chat = event.chat
-        chat_id = str(event.chat_id)
+        chat_id = event.chat_id
         username = getattr(chat, "username", None) if chat else None
-        if ALLOWED_CHANNELS and chat_id not in ALLOWED_CHANNELS and (username not in ALLOWED_CHANNELS):
+        if (ALLOWED_ID_SET or ALLOWED_NAME_SET) and (
+            chat_id not in ALLOWED_ID_SET and (username or "").lower() not in ALLOWED_NAME_SET
+        ):
             return
 
         text = event.message.message
