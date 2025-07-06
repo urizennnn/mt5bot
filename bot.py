@@ -4,6 +4,7 @@ import re
 import asyncio
 from dataclasses import dataclass
 from typing import Optional, List
+import argparse
 
 try:
     from dotenv import load_dotenv
@@ -229,6 +230,38 @@ async def monitor_trade(ticket: int, signal: TradeSignal):
         check_reversal_and_close(ticket, signal)
 
 
+async def test_last_messages():
+    """Fetch and display the last two messages from allowed channels."""
+    if TelegramClient is None:
+        logger.error("telethon package not installed")
+        return
+    if not API_ID or not API_HASH:
+        logger.error("TELEGRAM_API_ID and TELEGRAM_API_HASH must be set")
+        return
+
+    if not ALLOWED_CHANNELS:
+        logger.error("No TELEGRAM_CHANNELS configured for testing")
+        return
+
+    client = TelegramClient("mt5bot", API_ID, API_HASH)
+    await client.start()
+    for channel in ALLOWED_CHANNELS:
+        try:
+            messages = await client.get_messages(channel, limit=2)
+        except Exception as exc:
+            logger.error("Failed to fetch messages from %s: %s", channel, exc)
+            continue
+
+        logger.info("Last 2 messages from %s", channel)
+        for msg in reversed(messages):
+            text = msg.message or ""
+            logger.info(text)
+            signal = parse_signal(text)
+            if signal:
+                logger.info("Parsed signal: %s", signal)
+    await client.disconnect()
+
+
 async def run_client():
     if TelegramClient is None:
         logger.error("telethon package not installed")
@@ -264,7 +297,20 @@ async def run_client():
     await client.run_until_disconnected()
 
 
+def main() -> None:
+    parser = argparse.ArgumentParser(description="MT5 Telegram Trading Assistant")
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Fetch last two messages from allowed channels and exit",
+    )
+    args = parser.parse_args()
+
+    if args.test:
+        asyncio.run(test_last_messages())
+    else:
+        asyncio.run(run_client())
+
+
 if __name__ == "__main__":
-    if load_dotenv is not None:
-        load_dotenv()
-    asyncio.run(run_client())
+    main()
