@@ -18,9 +18,11 @@ except ImportError:  # environment might not have MetaTrader5
 
 try:
     from telethon import TelegramClient, events
+    from telethon.tl.types import User
 except ImportError:
     TelegramClient = None  # type: ignore
     events = None  # type: ignore
+    User = None  # type: ignore
 
 
 logging.basicConfig(level=logging.INFO)
@@ -262,6 +264,34 @@ async def test_last_messages():
     await client.disconnect()
 
 
+async def list_chats():
+    """List the channels, groups and chats the account can access."""
+    if TelegramClient is None:
+        logger.error("telethon package not installed")
+        return
+    if not API_ID or not API_HASH:
+        logger.error("TELEGRAM_API_ID and TELEGRAM_API_HASH must be set")
+        return
+
+    client = TelegramClient("mt5bot", API_ID, API_HASH)
+    await client.start()
+
+    async for dialog in client.iter_dialogs():
+        entity = dialog.entity
+        name = dialog.name
+        if getattr(entity, "megagroup", False):
+            chat_type = "Group"
+        elif getattr(entity, "broadcast", False):
+            chat_type = "Channel"
+        elif isinstance(entity, User):
+            chat_type = "Chat"
+        else:
+            chat_type = "Unknown"
+        logger.info("%s - %s (%s)", dialog.id, name, chat_type)
+
+    await client.disconnect()
+
+
 async def run_client():
     if TelegramClient is None:
         logger.error("telethon package not installed")
@@ -304,10 +334,17 @@ def main() -> None:
         action="store_true",
         help="Fetch last two messages from allowed channels and exit",
     )
+    parser.add_argument(
+        "--groups",
+        action="store_true",
+        help="List available channels, groups and chats and exit",
+    )
     args = parser.parse_args()
 
     if args.test:
         asyncio.run(test_last_messages())
+    elif args.groups:
+        asyncio.run(list_chats())
     else:
         asyncio.run(run_client())
 
