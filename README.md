@@ -4,7 +4,7 @@ This repository provides a simple trading bot that listens to Telegram messages 
 
 ## Features
 
-- Parses trading signals such as `buy vix 75 s` or `sell vol 10`.
+- Parses trading signals such as `buy EURUSD H1` or `sell BTCUSD m5`.
 - Connects to MT5 (requires the MetaTrader5 Python package and a running MT5 terminal).
 - Calculates trade lot size based on current account balance.
 - Automatically moves stop loss to break even after minimal profit.
@@ -14,22 +14,19 @@ This repository provides a simple trading bot that listens to Telegram messages 
 
 1. Install dependencies (Python 3.10+ recommended):
    ```bash
-   pip install MetaTrader5 python-telegram-bot
+   pip install MetaTrader5 python-telegram-bot python-dotenv
    ```
 
-2. Set your Telegram bot token in the `TELEGRAM_BOT_TOKEN` environment variable.
-   ```bash
-   export TELEGRAM_BOT_TOKEN="<your token>"
+2. Create a `.env` file with your bot and MT5 credentials:
+   ```
+   TELEGRAM_BOT_TOKEN=<your token>
+   MT5_LOGIN=<account>
+   MT5_PASSWORD=<password>
+   MT5_SERVER=<broker server>
+   RISK_PERCENT=1.0
    ```
 
-3. Set MT5 credentials (if needed):
-   ```bash
-   export MT5_LOGIN=<account>
-   export MT5_PASSWORD=<password>
-   export MT5_SERVER=<broker server>
-   ```
-
-4. Run the bot:
+3. Run the bot:
    ```bash
    python bot.py
    ```
