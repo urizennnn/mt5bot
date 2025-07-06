@@ -6,6 +6,11 @@ from dataclasses import dataclass
 from typing import Optional
 
 try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
+try:
     import MetaTrader5 as mt5
 except ImportError:  # environment might not have MetaTrader5
     mt5 = None  # type: ignore
@@ -15,11 +20,20 @@ try:
     from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 except ImportError:
     Update = None  # type: ignore
-    ApplicationBuilder = CommandHandler = ContextTypes = MessageHandler = filters = None  # type: ignore
+    class _DummyContext:
+        DEFAULT_TYPE = object
+
+    ApplicationBuilder = CommandHandler = MessageHandler = filters = None  # type: ignore
+    ContextTypes = _DummyContext  # type: ignore
 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+if load_dotenv is not None:
+    load_dotenv()
+
+RISK_PERCENT = float(os.environ.get("RISK_PERCENT", "1.0"))
 
 @dataclass
 class TradeSignal:
@@ -31,7 +45,7 @@ class TradeSignal:
 def parse_signal(text: str) -> Optional[TradeSignal]:
     """Parse a Telegram message into a trading signal."""
     pattern = re.compile(
-        r"(?P<action>buy|sell)\s+(?P<instrument>vix|vol|volatility)\s*(?P<symbol>\d+)\s*(?P<timeframe>\w*)",
+        r"(?P<action>buy|sell)\s+(?P<symbol>\S+)(?:\s+(?P<timeframe>\S+))?",
         re.IGNORECASE,
     )
     match = pattern.search(text)
@@ -39,7 +53,7 @@ def parse_signal(text: str) -> Optional[TradeSignal]:
         return None
 
     action = match.group("action").lower()
-    symbol = f"VOL{match.group('symbol')}"  # convert to standard symbol name
+    symbol = match.group("symbol").upper()
     timeframe = match.group("timeframe") or "1s"
     return TradeSignal(action=action, symbol=symbol, timeframe=timeframe)
 
@@ -82,7 +96,7 @@ def place_order(signal: TradeSignal):
         return
 
     balance = account_info.balance
-    lot = calculate_lot(balance)
+    lot = calculate_lot(balance, RISK_PERCENT)
 
     symbol_info = mt5.symbol_info(signal.symbol)
     if symbol_info is None:
@@ -234,6 +248,8 @@ def main(token: str):
 
 if __name__ == "__main__":
     import os
+    if load_dotenv is not None:
+        load_dotenv()
     telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     if telegram_token:
         main(telegram_token)
