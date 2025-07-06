@@ -86,15 +86,25 @@ def connect_mt5() -> bool:
         logger.error("MetaTrader5 package is not installed.")
         return False
 
-    if mt5.initialize():
+    path = os.getenv("MT5_PATH", "")
+    kwargs = {"path": path} if path else {}
+
+    if mt5.initialize(**kwargs):
         return True
+    else:
+        code, msg = mt5.last_error()
+        logger.warning("Initial MT5 initialize failed: %s (%s)", code, msg)
 
     login = int(os.getenv("MT5_LOGIN", "0"))
     password = os.getenv("MT5_PASSWORD", "")
     server = os.getenv("MT5_SERVER", "")
     if login and password and server:
-        if mt5.initialize(login=login, password=password, server=server):
+        kwargs.update({"login": login, "password": password, "server": server})
+        if mt5.initialize(**kwargs):
             return True
+        else:
+            code, msg = mt5.last_error()
+            logger.warning("MT5 initialize with credentials failed: %s (%s)", code, msg)
 
     logger.error("Failed to initialize MT5")
     return False

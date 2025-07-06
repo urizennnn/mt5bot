@@ -28,6 +28,7 @@ This repository provides a simple trading assistant that listens to messages fro
     MT5_LOGIN=<account>
     MT5_PASSWORD=<password>
     MT5_SERVER=<broker server>
+    MT5_PATH=<optional path to terminal executable>
     RISK_PERCENT=1.0
     ```
 
