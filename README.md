@@ -33,6 +33,13 @@ This repository provides a simple trading assistant that listens to messages fro
     python bot.py
     ```
 
+    To test your configuration and fetch the last two messages from each
+    configured channel, run:
+
+    ```bash
+    python bot.py --test
+    ```
+
 The script will start listening to the specified channels using your personal account. When a supported trading signal is received, it will attempt to place a trade via MT5. If a trade is already open, new signals are ignored.
 
 **Note:** Actual trading requires a configured MT5 terminal with login credentials and symbols enabled. The break-even and reversal thresholds in this bot are simple examples and should be adapted to your trading strategy.
