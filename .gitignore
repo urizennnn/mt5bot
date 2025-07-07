@@ -42,3 +42,5 @@ vendor/
 # Ignore venv
 myenv/
 venv/
+open_positions.json
+available_symbols.json

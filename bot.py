@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import Optional, List, Set, Tuple, Union, Dict
 import argparse
@@ -53,13 +54,99 @@ def _parse_allowed(raw: List[str]) -> Tuple[Set[int], Set[str]]:
 
 ALLOWED_ID_SET, ALLOWED_NAME_SET = _parse_allowed(ALLOWED_CHANNELS)
 
+SYMBOLS_FILE = "available_symbols.json"
+AVAILABLE_SYMBOLS: Set[str] = set()
+
 
 MESSAGE_POSITIONS: Dict[int, List[int]] = {}
+OPEN_POSITIONS_FILE = "open_positions.json"
+OPEN_POSITIONS: Dict[int, Dict[str, Union[str, float, int]]] = {}
 
 
 def _to_input(value: str) -> Union[int, str]:
     """Return int for numeric identifiers or the original string."""
     return int(value) if re.fullmatch(r"-?\d+", value) else value
+
+
+def load_open_positions() -> None:
+    """Load saved open positions from disk."""
+    global OPEN_POSITIONS
+    if os.path.exists(OPEN_POSITIONS_FILE):
+        try:
+            with open(OPEN_POSITIONS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            OPEN_POSITIONS = {int(k): v for k, v in data.items()}
+        except Exception as exc:
+            logger.warning("Failed to load %s: %s", OPEN_POSITIONS_FILE, exc)
+            OPEN_POSITIONS = {}
+    else:
+        OPEN_POSITIONS = {}
+
+
+def save_open_positions() -> None:
+    """Persist open positions to disk."""
+    try:
+        with open(OPEN_POSITIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump(OPEN_POSITIONS, f)
+    except Exception as exc:
+        logger.warning("Failed to save %s: %s", OPEN_POSITIONS_FILE, exc)
+
+
+def refresh_open_positions() -> None:
+    """Fetch current MT5 positions and persist them."""
+    if mt5 is None:
+        OPEN_POSITIONS.clear()
+        return
+    positions = mt5.positions_get() or []
+    OPEN_POSITIONS.clear()
+    for pos in positions:
+        OPEN_POSITIONS[pos.ticket] = {
+            "symbol": pos.symbol,
+            "volume": pos.volume,
+            "type": pos.type,
+        }
+    save_open_positions()
+
+
+def load_symbols() -> None:
+    """Load available symbols from disk."""
+    global AVAILABLE_SYMBOLS
+    if os.path.exists(SYMBOLS_FILE):
+        try:
+            with open(SYMBOLS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                AVAILABLE_SYMBOLS = {s.upper() for s in data}
+            else:
+                AVAILABLE_SYMBOLS = set()
+        except Exception as exc:
+            logger.warning("Failed to load %s: %s", SYMBOLS_FILE, exc)
+            AVAILABLE_SYMBOLS = set()
+    else:
+        AVAILABLE_SYMBOLS = set()
+
+
+def save_symbols() -> None:
+    """Persist available symbols to disk."""
+    try:
+        with open(SYMBOLS_FILE, "w", encoding="utf-8") as f:
+            json.dump(sorted(AVAILABLE_SYMBOLS), f)
+    except Exception as exc:
+        logger.warning("Failed to save %s: %s", SYMBOLS_FILE, exc)
+
+
+def refresh_symbols() -> None:
+    """Fetch available MT5 symbols and persist them."""
+    if mt5 is None:
+        AVAILABLE_SYMBOLS.clear()
+        return
+    symbols = mt5.symbols_get() or []
+    AVAILABLE_SYMBOLS.clear()
+    for sym in symbols:
+        name = getattr(sym, "name", None)
+        if isinstance(name, str):
+            AVAILABLE_SYMBOLS.add(name.upper())
+    save_symbols()
 
 @dataclass
 class TradeSignal:
@@ -82,6 +169,11 @@ def parse_signal(text: str) -> Optional[TradeSignal]:
 
     action = match.group("action").lower()
     symbol = match.group("symbol").upper()
+    synonyms = {"VOL": "VOLATILITY", "VIX": "VOLATILITY"}
+    symbol = synonyms.get(symbol, symbol)
+    if AVAILABLE_SYMBOLS and symbol not in AVAILABLE_SYMBOLS:
+        logger.error("Symbol %s not found", symbol)
+        return None
     timeframe = match.group("timeframe") or "1s"
 
     sl_match = re.search(r"sl[:\s]*(\d+(?:\.\d+)?)", text, re.IGNORECASE)
@@ -290,6 +382,8 @@ def check_reversal_and_close(ticket: int, signal: TradeSignal):
         logger.error("Failed to close position: %s", result)
     else:
         logger.info("Position %s closed", ticket)
+        OPEN_POSITIONS.pop(ticket, None)
+        save_open_positions()
 
 
 async def monitor_trade(ticket: int, signal: TradeSignal):
@@ -303,6 +397,8 @@ async def monitor_trade(ticket: int, signal: TradeSignal):
         positions = mt5.positions_get(ticket=ticket)
         if not positions:
             logger.info("Ticket %s no longer open", ticket)
+            OPEN_POSITIONS.pop(ticket, None)
+            save_open_positions()
             break
         position = positions[0]
         entry_price = position.price_open
@@ -381,6 +477,8 @@ def place_test_trade():
     """Place a sample trade on the VIX 25 index."""
     if not connect_mt5():
         return
+    refresh_open_positions()
+    refresh_symbols()
     signal = TradeSignal(action="buy", symbol="VIX25", timeframe="1s")
     place_order(signal)
     if mt5 is not None:
@@ -397,6 +495,8 @@ async def run_client():
 
     if not connect_mt5():
         return
+    refresh_open_positions()
+    refresh_symbols()
 
     client = TelegramClient("mt5bot", API_ID, API_HASH)
 
@@ -413,6 +513,9 @@ async def run_client():
         text = event.message.message
         signal = parse_signal(text)
         if signal and connect_mt5():
+            if any(p.get("symbol") == signal.symbol for p in OPEN_POSITIONS.values()):
+                logger.info("Position already open for %s", signal.symbol)
+                return
             tickets: List[int] = []
             for _ in range(POSITIONS_PER_SIGNAL):
                 if not can_open_trade():
@@ -421,6 +524,8 @@ async def run_client():
                 ticket = place_order(signal)
                 if ticket:
                     tickets.append(ticket)
+                    OPEN_POSITIONS[ticket] = {"symbol": signal.symbol}
+                    save_open_positions()
                     asyncio.create_task(monitor_trade(ticket, signal))
             if tickets:
                 MESSAGE_POSITIONS[event.message.id] = tickets
@@ -464,7 +569,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    connect_mt5()
+    load_open_positions()
+    load_symbols()
+    if connect_mt5():
+        refresh_open_positions()
+        refresh_symbols()
 
     if args.trade is not None:
         place_test_trade()
