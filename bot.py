@@ -3,7 +3,7 @@ import os
 import re
 import asyncio
 from dataclasses import dataclass
-from typing import Optional, List, Set, Tuple, Union
+from typing import Optional, List, Set, Tuple, Union, Dict
 import argparse
 
 try:
@@ -32,6 +32,7 @@ if load_dotenv is not None:
     load_dotenv()
 
 RISK_PERCENT = float(os.getenv("RISK_PERCENT", "1.0"))
+POSITIONS_PER_SIGNAL = int(os.getenv("POSITIONS_PER_SIGNAL", "2"))
 API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
 API_HASH = os.getenv("TELEGRAM_API_HASH", "")
 
@@ -53,6 +54,9 @@ def _parse_allowed(raw: List[str]) -> Tuple[Set[int], Set[str]]:
 ALLOWED_ID_SET, ALLOWED_NAME_SET = _parse_allowed(ALLOWED_CHANNELS)
 
 
+MESSAGE_POSITIONS: Dict[int, List[int]] = {}
+
+
 def _to_input(value: str) -> Union[int, str]:
     """Return int for numeric identifiers or the original string."""
     return int(value) if re.fullmatch(r"-?\d+", value) else value
@@ -62,6 +66,8 @@ class TradeSignal:
     action: str
     symbol: str
     timeframe: str
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
 
 
 def parse_signal(text: str) -> Optional[TradeSignal]:
@@ -77,7 +83,19 @@ def parse_signal(text: str) -> Optional[TradeSignal]:
     action = match.group("action").lower()
     symbol = match.group("symbol").upper()
     timeframe = match.group("timeframe") or "1s"
-    return TradeSignal(action=action, symbol=symbol, timeframe=timeframe)
+
+    sl_match = re.search(r"sl[:\s]*(\d+(?:\.\d+)?)", text, re.IGNORECASE)
+    tp_match = re.search(r"tp[:\s]*(\d+(?:\.\d+)?)", text, re.IGNORECASE)
+    stop_loss = float(sl_match.group(1)) if sl_match else None
+    take_profit = float(tp_match.group(1)) if tp_match else None
+
+    return TradeSignal(
+        action=action,
+        symbol=symbol,
+        timeframe=timeframe,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+    )
 
 
 def connect_mt5() -> bool:
@@ -125,6 +143,20 @@ def has_open_positions() -> bool:
     return bool(positions)
 
 
+def can_open_trade() -> bool:
+    """Check if there is enough free margin to open a new trade."""
+    if mt5 is None:
+        return False
+
+    account = mt5.account_info()
+    if account is None:
+        return False
+
+    free_margin = account.equity - account.margin
+    required_margin = account.equity * RISK_PERCENT / 100.0
+    return free_margin > required_margin
+
+
 def place_order(signal: TradeSignal):
     if mt5 is None:
         logger.error("MT5 not available")
@@ -135,8 +167,8 @@ def place_order(signal: TradeSignal):
         logger.error("Unable to get account info")
         return
 
-    balance = account_info.balance
-    lot = calculate_lot(balance, RISK_PERCENT)
+    equity = account_info.equity
+    lot = calculate_lot(equity, RISK_PERCENT)
 
     symbol_info = mt5.symbol_info(signal.symbol)
     if symbol_info is None:
@@ -167,6 +199,10 @@ def place_order(signal: TradeSignal):
         "type_time": mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_IOC,
     }
+    if signal.stop_loss is not None:
+        request["sl"] = signal.stop_loss
+    if signal.take_profit is not None:
+        request["tp"] = signal.take_profit
     result = mt5.order_send(request)
     if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
         logger.error("Order failed: %s", result)
@@ -191,6 +227,24 @@ def set_break_even(ticket: int, price: float):
         logger.error("Failed to set break even: %s", result)
     else:
         logger.info("Break even set for ticket %s", ticket)
+
+
+def update_sl_tp(ticket: int, sl: float, tp: float):
+    """Update stop loss and take profit for an open position."""
+    if mt5 is None:
+        return
+
+    request = {
+        "action": mt5.TRADE_ACTION_SLTP,
+        "position": ticket,
+        "sl": sl,
+        "tp": tp,
+    }
+    result = mt5.order_send(request)
+    if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+        logger.error("Failed to update SL/TP: %s", result)
+    else:
+        logger.info("SL/TP updated for ticket %s", ticket)
 
 
 def check_reversal_and_close(ticket: int, signal: TradeSignal):
@@ -359,14 +413,31 @@ async def run_client():
         text = event.message.message
         signal = parse_signal(text)
         if signal and connect_mt5():
-            if has_open_positions():
-                logger.warning("Open position detected, skipping new trade")
-                return
-            ticket = place_order(signal)
-            if ticket:
-                asyncio.create_task(monitor_trade(ticket, signal))
+            tickets: List[int] = []
+            for _ in range(POSITIONS_PER_SIGNAL):
+                if not can_open_trade():
+                    logger.warning("Insufficient equity for additional position")
+                    break
+                ticket = place_order(signal)
+                if ticket:
+                    tickets.append(ticket)
+                    asyncio.create_task(monitor_trade(ticket, signal))
+            if tickets:
+                MESSAGE_POSITIONS[event.message.id] = tickets
         else:
             logger.debug("No valid signal found in message: %s", text)
+
+    @client.on(events.MessageEdited)
+    async def handle_edit(event):
+        tickets = MESSAGE_POSITIONS.get(event.message.id)
+        if not tickets:
+            return
+        text = event.message.message
+        signal = parse_signal(text)
+        if not signal or signal.stop_loss is None or signal.take_profit is None:
+            return
+        for ticket in tickets:
+            update_sl_tp(ticket, signal.stop_loss, signal.take_profit)
 
     await client.start()
     logger.info("Client started")
