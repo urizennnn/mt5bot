@@ -169,7 +169,7 @@ def parse_signal(text: str) -> Optional[TradeSignal]:
 
     action = match.group("action").lower()
     symbol = match.group("symbol").upper()
-    synonyms = {"VOL": "VOLATILITY", "VIX": "VOLATILITY"}
+    synonyms = {"VOL": "Volatility", "VIX": "Volatility"}
     symbol = synonyms.get(symbol, symbol)
     if AVAILABLE_SYMBOLS and symbol not in AVAILABLE_SYMBOLS:
         logger.error("Symbol %s not found", symbol)
